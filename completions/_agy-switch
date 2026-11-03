@@ -9,6 +9,7 @@ _agy_switch() {
     'current:Show currently active profile'
     'add:Add and prepare login for a new account'
     'save:Save current active token as a profile'
+    'save-acp:Save current ACP credentials to a profile'
     'delete:Delete a saved profile'
     'rename:Rename a profile'
     'json:Output profiles in JSON format'
@@ -18,7 +19,7 @@ _agy_switch() {
   )
 
   local -a profiles
-  local pdir="/home/butterfly/.gemini/profiles"
+  local pdir="${HOME}/.gemini/profiles"
   if [ -d "$pdir" ]; then
     for f in "$pdir"/*(N); do
       local b="$(basename "$f")"
@@ -32,7 +33,7 @@ _agy_switch() {
     _describe -t profiles 'profile' profiles
   elif (( CURRENT == 3 )); then
     case "$words[2]" in
-      switch|delete|rm|remove|rename|mv)
+      switch|delete|rm|remove|rename|mv|save-acp)
         _describe -t profiles 'profile' profiles
         ;;
     esac

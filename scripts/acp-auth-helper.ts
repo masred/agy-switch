@@ -1,21 +1,41 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { HeadlessOAuthRelay } from "/home/butterfly/.pi/agent/npm/node_modules/pi-antigravity-acp-provider/src/acp/headless-oauth.js";
-import { AntigravityAcpConnection } from "/home/butterfly/.pi/agent/npm/node_modules/pi-antigravity-acp-provider/src/acp/connection.js";
-import { clearAntigravityCredentials } from "/home/butterfly/.pi/agent/npm/node_modules/pi-antigravity-acp-provider/src/acp/antigravity.js";
+
+// Enforce strict process umask
+try {
+  process.umask(0o077);
+} catch (_) {}
 
 const HOME = os.homedir();
-const ACP_AUTH_FILE = path.join(HOME, ".gemini", "antigravity-acp", "acp_token.json");
+const ACP_BASE_DIR = path.join(HOME, ".gemini", "antigravity-acp");
+const ACP_AUTH_FILE = path.join(ACP_BASE_DIR, "acp_token.json");
 const PROFILES_DIR = path.join(HOME, ".gemini", "profiles");
 const ACP_PROFILES_DIR = path.join(PROFILES_DIR, ".acp");
-const STATE_FILE = "/tmp/acp-auth-state.json";
-const CALLBACK_FILE = "/tmp/acp-callback.txt";
+
+// Store IPC state inside secure user-scoped directory instead of world-writable /tmp
+const STATE_DIR = path.join(ACP_BASE_DIR, ".state");
+const STATE_FILE = path.join(STATE_DIR, "acp-auth-state.json");
+const CALLBACK_FILE = path.join(STATE_DIR, "acp-callback.txt");
 
 interface Args {
   profile: string;
   email?: string;
   timeoutSec: number;
+}
+
+function validateProfileName(name: string): string {
+  if (!name || typeof name !== "string") {
+    throw new Error("Profile name is required.");
+  }
+  const trimmed = name.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    throw new Error(`Invalid profile name '${name}'. Profile names must contain only letters, numbers, hyphens, or underscores.`);
+  }
+  if (trimmed.startsWith(".") || trimmed.startsWith("-")) {
+    throw new Error("Profile name cannot start with '.' or '-'.");
+  }
+  return trimmed;
 }
 
 function parseArgs(): Args {
@@ -39,17 +59,57 @@ function parseArgs(): Args {
     process.exit(1);
   }
 
-  return { profile, email, timeoutSec };
+  const validProfile = validateProfileName(profile);
+  return { profile: validProfile, email, timeoutSec };
+}
+
+async function loadAcpProviderModules() {
+  const providerBasePath = path.join(
+    HOME,
+    ".pi",
+    "agent",
+    "npm",
+    "node_modules",
+    "pi-antigravity-acp-provider",
+    "src",
+    "acp"
+  );
+
+  const headlessPath = path.join(providerBasePath, "headless-oauth.js");
+  const connectionPath = path.join(providerBasePath, "connection.js");
+  const antigravityPath = path.join(providerBasePath, "antigravity.js");
+
+  if (!fs.existsSync(headlessPath) || !fs.existsSync(connectionPath)) {
+    throw new Error(
+      `Could not locate pi-antigravity-acp-provider at ${providerBasePath}. Please ensure the Pi Antigravity provider is installed.`
+    );
+  }
+
+  const { HeadlessOAuthRelay } = await import(headlessPath);
+  const { AntigravityAcpConnection } = await import(connectionPath);
+  const { clearAntigravityCredentials } = await import(antigravityPath);
+
+  return { HeadlessOAuthRelay, AntigravityAcpConnection, clearAntigravityCredentials };
 }
 
 async function main() {
   const { profile, email, timeoutSec } = parseArgs();
+
+  // Ensure state directories exist with mode 0700
+  if (!fs.existsSync(STATE_DIR)) {
+    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    fs.chmodSync(STATE_DIR, 0o700);
+  }
 
   console.log(`[ACP-AUTH] Starting auth flow for profile: '${profile}' (email: ${email || "any"})`);
 
   // Clean state files
   try { if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE); } catch (_) {}
   try { if (fs.existsSync(CALLBACK_FILE)) fs.unlinkSync(CALLBACK_FILE); } catch (_) {}
+
+  const { HeadlessOAuthRelay, AntigravityAcpConnection, clearAntigravityCredentials } =
+    await loadAcpProviderModules();
 
   clearAntigravityCredentials();
 
@@ -61,7 +121,7 @@ async function main() {
 
   try {
     const init = await connection.initialize();
-    const method = init.authMethods?.find((candidate) =>
+    const method = init.authMethods?.find((candidate: any) =>
       /log\s*in\s+with\s+google|google\s+account|oauth-personal/iu.test(
         `${candidate.id} ${candidate.name}`
       )
@@ -71,15 +131,16 @@ async function main() {
       throw new Error("Antigravity ACP did not advertise Google login");
     }
 
+    let authError: Error | null = null;
     const authPromise = connection.authenticate(
       { methodId: method.id },
       undefined,
       timeoutSec * 1000
     );
 
-    authPromise.catch((err) => {
-      // Don't crash unhandled if connection closes early
-      console.log(`[ACP-AUTH] Auth promise: ${err.message}`);
+    authPromise.catch((err: Error) => {
+      authError = err;
+      console.log(`[ACP-AUTH] Auth rejection: ${err.message}`);
     });
 
     const captured = await relay.waitForAuthorization();
@@ -102,11 +163,12 @@ async function main() {
       timestamp: Date.now(),
     };
 
-    fs.writeFileSync(STATE_FILE, JSON.stringify(stateData, null, 2));
+    fs.writeFileSync(STATE_FILE, JSON.stringify(stateData, null, 2), { mode: 0o600 });
 
     console.log(`\n======================================================`);
     console.log(`AUTH_URL_READY: ${finalAuthUrl}`);
     console.log(`REDIRECT_LISTENER: ${captured.redirectUrl.toString()}`);
+    console.log(`STATE_FILE: ${STATE_FILE}`);
     console.log(`======================================================\n`);
 
     // Poll for callback file or auth completion
@@ -114,11 +176,17 @@ async function main() {
     const deadline = startTime + timeoutSec * 1000;
 
     let authDone = false;
-    authPromise.then(() => {
-      authDone = true;
-    }).catch(() => {});
+    authPromise
+      .then(() => {
+        authDone = true;
+      })
+      .catch(() => {});
 
     while (!authDone && Date.now() < deadline) {
+      if (authError) {
+        throw authError;
+      }
+
       // Check if callback file was provided
       if (fs.existsSync(CALLBACK_FILE)) {
         const callbackVal = fs.readFileSync(CALLBACK_FILE, "utf8").trim();
@@ -159,9 +227,9 @@ async function main() {
       throw new Error(`ACP token file does not contain a refresh_token.`);
     }
 
-    // Save to ACP profile directory
+    // Save to ACP profile directory with strict permissions
     if (!fs.existsSync(ACP_PROFILES_DIR)) {
-      fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+      fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true, mode: 0o700 });
     }
 
     const targetPath = path.join(ACP_PROFILES_DIR, profile);
@@ -169,13 +237,14 @@ async function main() {
 
     fs.writeFileSync(
       STATE_FILE,
-      JSON.stringify({ ...stateData, status: "SUCCESS", finishedAt: Date.now() }, null, 2)
+      JSON.stringify({ ...stateData, status: "SUCCESS", finishedAt: Date.now() }, null, 2),
+      { mode: 0o600 }
     );
 
     console.log(`\nAUTH_SUCCESS: Successfully authenticated and saved ACP profile for '${profile}'!`);
   } finally {
-    relay.dispose();
-    await connection.close().catch(() => {});
+    try { relay.dispose(); } catch (_) {}
+    try { await connection.close(); } catch (_) {}
   }
 }
 
@@ -184,7 +253,8 @@ main().catch((err) => {
   try {
     fs.writeFileSync(
       STATE_FILE,
-      JSON.stringify({ status: "ERROR", error: err.message }, null, 2)
+      JSON.stringify({ status: "ERROR", error: err.message }, null, 2),
+      { mode: 0o600 }
     );
   } catch (_) {}
   process.exit(1);

@@ -3,7 +3,7 @@ _agy_switch_completions() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  local commands="tui switch list current add save delete rename json sync completion help"
+  local commands="tui switch list current add save save-acp delete rename json sync completion help"
   local pdir="${HOME}/.gemini/profiles"
   local profiles=""
   if [ -d "$pdir" ]; then
@@ -14,7 +14,7 @@ _agy_switch_completions() {
     COMPREPLY=( $(compgen -W "${commands} ${profiles}" -- "$cur") )
   elif [ "$COMP_CWORD" -eq 2 ]; then
     case "$prev" in
-      switch|delete|rm|remove|rename|mv)
+      switch|delete|rm|remove|rename|mv|save-acp)
         COMPREPLY=( $(compgen -W "${profiles}" -- "$cur") )
         ;;
       completion)

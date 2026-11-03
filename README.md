@@ -9,11 +9,13 @@
 ## ✨ Features
 
 - **Zero External Dependencies**: Pure standard Node.js (`fs`, `path`, `os`, `readline`, ANSI formatting).
-- **Interactive TUI**: Beautiful, responsive Terminal User Interface with keyboard navigation, active indicators, token metadata (email, expiry, refresh token status), and modal dialogs.
+- **Interactive TUI**: Beautiful, responsive Terminal User Interface with keyboard navigation, viewport scrolling with indicators (`▲`/`▼`), active indicators, token metadata (email, expiry, refresh token status), and modal dialogs.
 - **Dual Sync (CLI + ACP)**: Synchronizes both Antigravity CLI tokens (`~/.gemini/antigravity-cli/antigravity-oauth-token`) and ACP tokens (`~/.gemini/antigravity-acp/acp_token.json`).
 - **Auto-Capture & Token Healing**: Automatically captures refreshed OAuth tokens and captures newly verified ACP sessions without manual intervention.
+- **Security Hardened**: Path traversal protection, atomic file swapping to prevent race conditions, explicit `0o700`/`0o600` permission enforcement, and user-isolated state files.
 - **Headless & Scriptable**: First-class subcommands (`list`, `switch`, `add`, `save`, `save-acp`, `delete`, `rename`, `json`) for shell scripting and automation.
 - **Shell Completions**: Built-in tab completions for Zsh and Bash.
+- **Comprehensive Test Suite**: Automated tests using native `node:test` runner.
 
 ---
 
@@ -58,6 +60,8 @@ agy-switch
 | Key | Action |
 | --- | --- |
 | `↑` / `↓` / `j` / `k` | Navigate profiles list |
+| `PgUp` / `PgDn` | Jump page up / down |
+| `Home` / `End` | Jump to top / bottom |
 | `Enter` / `Space` | Switch active Google account |
 | `a` | Add & prepare setup for a new account |
 | `s` | Save current active session as a profile |
@@ -77,7 +81,7 @@ You can run `agy-switch` headlessly:
 | `agy-switch` | Launch interactive TUI |
 | `agy-switch <name>` | Shortcut to directly switch to profile `<name>` |
 | `agy-switch switch <name>` | Switch active account to profile `<name>` |
-| `agy-switch list` (or `ls`) | List all saved profiles with CLI and ACP status |
+| `agy-switch list` (or `ls`) | List all saved profiles with email, CLI, and ACP status |
 | `agy-switch current` (or `whoami`) | Print currently active profile name |
 | `agy-switch add <name>` | Prepare and wait for browser sign-in for `<name>` |
 | `agy-switch save <name>` | Save current active session (CLI & ACP) as `<name>` |
@@ -87,7 +91,18 @@ You can run `agy-switch` headlessly:
 | `agy-switch json` | Output profiles and active status in JSON format |
 | `agy-switch sync` | Sync pending logins or refreshed tokens |
 | `agy-switch completion [bash\|zsh]` | Output shell completion script |
+| `agy-switch --version` (or `-v`) | Print package version |
 | `agy-switch help` | Show help information |
+
+---
+
+## 🧪 Testing
+
+Run the automated test suite with Node.js built-in test runner:
+
+```bash
+npm test
+```
 
 ---
 
