@@ -1,0 +1,42 @@
+#compdef agy-switch switch-account agy-account
+
+_agy_switch() {
+  local -a subcommands
+  subcommands=(
+    'tui:Launch interactive TUI interface'
+    'switch:Switch active account to profile'
+    'list:List all saved profiles'
+    'current:Show currently active profile'
+    'add:Add and prepare login for a new account'
+    'save:Save current active token as a profile'
+    'delete:Delete a saved profile'
+    'rename:Rename a profile'
+    'json:Output profiles in JSON format'
+    'sync:Sync pending logins or refreshed tokens'
+    'completion:Generate shell completion script'
+    'help:Show help information'
+  )
+
+  local -a profiles
+  local pdir="/home/butterfly/.gemini/profiles"
+  if [ -d "$pdir" ]; then
+    for f in "$pdir"/*(N); do
+      local b="$(basename "$f")"
+      [[ "$b" == .* ]] && continue
+      profiles+=("$b")
+    done
+  fi
+
+  if (( CURRENT == 2 )); then
+    _describe -t subcommands 'command' subcommands
+    _describe -t profiles 'profile' profiles
+  elif (( CURRENT == 3 )); then
+    case "$words[2]" in
+      switch|delete|rm|remove|rename|mv)
+        _describe -t profiles 'profile' profiles
+        ;;
+    esac
+  fi
+}
+
+_agy_switch "$@"

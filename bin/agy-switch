@@ -1,0 +1,1297 @@
+#!/usr/bin/env node
+
+/**
+ * agy-switch: Google Account Switcher TUI & CLI for Antigravity CLI (agy)
+ * Full interactive Terminal User Interface (TUI) with zero LLM intervention.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const readline = require('readline');
+
+// File paths
+const HOME = os.homedir();
+const PROFILES_DIR = path.join(HOME, '.gemini', 'profiles');
+const AUTH_FILE = path.join(HOME, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+const PENDING_FILE = path.join(PROFILES_DIR, '.pending_profile');
+const ACTIVE_FILE = path.join(PROFILES_DIR, '.active_profile');
+
+// ACP File paths
+const ACP_AUTH_FILE = path.join(HOME, '.gemini', 'antigravity-acp', 'acp_token.json');
+const ACP_PROFILES_DIR = path.join(PROFILES_DIR, '.acp');
+const ACP_VERIFIED_FILE = path.join(HOME, '.pi', 'agent', 'antigravity-bridge', 'acp-auth-verified.json');
+
+// Ensure profiles directory exists
+try {
+  if (!fs.existsSync(PROFILES_DIR)) {
+    fs.mkdirSync(PROFILES_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(ACP_PROFILES_DIR)) {
+    fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+  }
+} catch (_) {}
+
+// ANSI Colors and formatting
+const c = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  italic: '\x1b[3m',
+  underline: '\x1b[4m',
+  inverse: '\x1b[7m',
+  black: '\x1b[30m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m',
+  bgBlack: '\x1b[40m',
+  bgRed: '\x1b[41m',
+  bgGreen: '\x1b[42m',
+  bgYellow: '\x1b[43m',
+  bgBlue: '\x1b[44m',
+  bgMagenta: '\x1b[45m',
+  bgCyan: '\x1b[46m',
+  bgWhite: '\x1b[47m',
+  bgDarkGray: '\x1b[100m',
+  gray: '\x1b[90m',
+  brightGreen: '\x1b[92m',
+  brightYellow: '\x1b[93m',
+  brightCyan: '\x1b[96m',
+  brightWhite: '\x1b[97m',
+};
+
+// Strip ANSI for string length calculations
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function padRight(str, len) {
+  const visualLen = stripAnsi(str).length;
+  if (visualLen >= len) return str;
+  return str + ' '.repeat(len - visualLen);
+}
+
+function truncate(str, maxLen) {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 1) + '…';
+}
+
+// Token & Profile Management Logic
+class ProfileManager {
+  static sync() {
+    // 1. Pending login sync (CLI & ACP)
+    try {
+      if (fs.existsSync(PENDING_FILE) && fs.existsSync(AUTH_FILE)) {
+        const targetName = fs.readFileSync(PENDING_FILE, 'utf8').trim();
+        if (targetName) {
+          fs.copyFileSync(AUTH_FILE, path.join(PROFILES_DIR, targetName));
+          fs.chmodSync(path.join(PROFILES_DIR, targetName), 0o600);
+          if (fs.existsSync(ACP_AUTH_FILE)) {
+            if (!fs.existsSync(ACP_PROFILES_DIR)) fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+            fs.copyFileSync(ACP_AUTH_FILE, path.join(ACP_PROFILES_DIR, targetName));
+            fs.chmodSync(path.join(ACP_PROFILES_DIR, targetName), 0o600);
+          }
+          fs.writeFileSync(ACTIVE_FILE, targetName, 'utf8');
+          fs.unlinkSync(PENDING_FILE);
+          return { type: 'pending_synced', name: targetName };
+        }
+      }
+    } catch (_) {}
+
+    // 2. Refreshed token sync (CLI)
+    let activeName = null;
+    try {
+      if (fs.existsSync(AUTH_FILE)) {
+        const authData = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+        const authRefresh = authData.token?.refresh_token;
+        if (authRefresh) {
+          const files = fs.readdirSync(PROFILES_DIR).filter(f => !f.startsWith('.'));
+          for (const f of files) {
+            const fPath = path.join(PROFILES_DIR, f);
+            if (!fs.statSync(fPath).isFile()) continue;
+            try {
+              const pData = JSON.parse(fs.readFileSync(fPath, 'utf8'));
+              if (pData.token?.refresh_token === authRefresh) {
+                const authRaw = fs.readFileSync(AUTH_FILE, 'utf8');
+                const pRaw = fs.readFileSync(fPath, 'utf8');
+                if (authRaw !== pRaw) {
+                  fs.writeFileSync(fPath, authRaw, { mode: 0o600 });
+                }
+                fs.writeFileSync(ACTIVE_FILE, f, 'utf8');
+                activeName = f;
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. ACP Token auto-capture & sync for active profile
+    try {
+      const active = activeName || this.getActiveProfile();
+      if (active && fs.existsSync(ACP_AUTH_FILE)) {
+        if (!fs.existsSync(ACP_PROFILES_DIR)) fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+        const acpProfilePath = path.join(ACP_PROFILES_DIR, active);
+        const curAcpRaw = fs.readFileSync(ACP_AUTH_FILE, 'utf8');
+        let savedAcpRaw = null;
+        if (fs.existsSync(acpProfilePath)) {
+          savedAcpRaw = fs.readFileSync(acpProfilePath, 'utf8');
+        }
+        if (curAcpRaw !== savedAcpRaw) {
+          fs.writeFileSync(acpProfilePath, curAcpRaw, { mode: 0o600 });
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  static getActiveProfile() {
+    if (!fs.existsSync(AUTH_FILE)) return null;
+
+    try {
+      const authRaw = fs.readFileSync(AUTH_FILE, 'utf8');
+      const authData = JSON.parse(authRaw);
+      const authRefresh = authData.token?.refresh_token;
+
+      // 1. Exact match
+      const files = fs.readdirSync(PROFILES_DIR).filter(f => !f.startsWith('.'));
+      for (const f of files) {
+        const fPath = path.join(PROFILES_DIR, f);
+        if (!fs.statSync(fPath).isFile()) continue;
+        if (fs.readFileSync(fPath, 'utf8') === authRaw) {
+          return f;
+        }
+      }
+
+      // 2. Refresh token match
+      if (authRefresh) {
+        for (const f of files) {
+          const fPath = path.join(PROFILES_DIR, f);
+          if (!fs.statSync(fPath).isFile()) continue;
+          try {
+            const pData = JSON.parse(fs.readFileSync(fPath, 'utf8'));
+            if (pData.token?.refresh_token === authRefresh) {
+              return f;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 3. Fallback to active file if valid
+      if (fs.existsSync(ACTIVE_FILE)) {
+        const saved = fs.readFileSync(ACTIVE_FILE, 'utf8').trim();
+        if (saved && fs.existsSync(path.join(PROFILES_DIR, saved))) {
+          return saved;
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  static getProfiles() {
+    this.sync();
+    const active = this.getActiveProfile();
+    const profiles = [];
+
+    if (fs.existsSync(PROFILES_DIR)) {
+      const files = fs.readdirSync(PROFILES_DIR).filter(f => !f.startsWith('.'));
+      for (const f of files) {
+        const fPath = path.join(PROFILES_DIR, f);
+        try {
+          const stat = fs.statSync(fPath);
+          if (!stat.isFile()) continue;
+
+          let data = null;
+          try {
+            data = JSON.parse(fs.readFileSync(fPath, 'utf8'));
+          } catch (_) {}
+
+          const acpPath = path.join(ACP_PROFILES_DIR, f);
+          const hasAcp = fs.existsSync(acpPath);
+
+          profiles.push({
+            name: f,
+            active: f === active,
+            path: fPath,
+            size: stat.size,
+            mtime: stat.mtime,
+            data: data,
+            authMethod: data?.auth_method || 'consumer',
+            expiry: data?.token?.expiry ? new Date(data.token.expiry) : null,
+            hasRefreshToken: !!data?.token?.refresh_token,
+            hasAcp,
+          });
+        } catch (_) {}
+      }
+    }
+
+    profiles.sort((a, b) => a.name.localeCompare(b.name));
+    return { profiles, active };
+  }
+
+  static getPending() {
+    try {
+      if (fs.existsSync(PENDING_FILE)) {
+        return fs.readFileSync(PENDING_FILE, 'utf8').trim();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static switchProfile(name) {
+    const targetPath = path.join(PROFILES_DIR, name);
+    if (!fs.existsSync(targetPath)) {
+      throw new Error(`Profile '${name}' not found.`);
+    }
+
+    const authDir = path.dirname(AUTH_FILE);
+    if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+
+    if (fs.existsSync(PENDING_FILE)) fs.unlinkSync(PENDING_FILE);
+
+    // 1. Switch CLI token
+    fs.copyFileSync(targetPath, AUTH_FILE);
+    fs.chmodSync(AUTH_FILE, 0o600);
+    fs.writeFileSync(ACTIVE_FILE, name, 'utf8');
+
+    // 2. Switch ACP token
+    const acpTarget = path.join(ACP_PROFILES_DIR, name);
+    const acpDir = path.dirname(ACP_AUTH_FILE);
+    let hasAcp = false;
+
+    if (fs.existsSync(acpTarget)) {
+      if (!fs.existsSync(acpDir)) fs.mkdirSync(acpDir, { recursive: true });
+      fs.copyFileSync(acpTarget, ACP_AUTH_FILE);
+      fs.chmodSync(ACP_AUTH_FILE, 0o600);
+      hasAcp = true;
+
+      // Update bridge verified marker if state directory exists
+      try {
+        const bridgeDir = path.dirname(ACP_VERIFIED_FILE);
+        if (fs.existsSync(bridgeDir)) {
+          fs.writeFileSync(ACP_VERIFIED_FILE, JSON.stringify({ verified: true, at: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
+        }
+      } catch (_) {}
+    } else {
+      // Remove stale ACP token to avoid account mismatch
+      try {
+        if (fs.existsSync(ACP_AUTH_FILE)) fs.unlinkSync(ACP_AUTH_FILE);
+        if (fs.existsSync(ACP_VERIFIED_FILE)) fs.unlinkSync(ACP_VERIFIED_FILE);
+      } catch (_) {}
+    }
+
+    return { name, hasAcp };
+  }
+
+  static addProfile(name) {
+    if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
+      throw new Error('Profile name must contain only letters, numbers, hyphens, or underscores.');
+    }
+
+    this.sync();
+    const active = this.getActiveProfile();
+
+    // Auto backup current unsaved session
+    if (fs.existsSync(AUTH_FILE) && !active) {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const backupName = `backup-${timestamp}`;
+      fs.copyFileSync(AUTH_FILE, path.join(PROFILES_DIR, backupName));
+      fs.chmodSync(path.join(PROFILES_DIR, backupName), 0o600);
+
+      if (fs.existsSync(ACP_AUTH_FILE)) {
+        if (!fs.existsSync(ACP_PROFILES_DIR)) fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+        fs.copyFileSync(ACP_AUTH_FILE, path.join(ACP_PROFILES_DIR, backupName));
+        fs.chmodSync(path.join(ACP_PROFILES_DIR, backupName), 0o600);
+      }
+    }
+
+    fs.writeFileSync(PENDING_FILE, name, 'utf8');
+    if (fs.existsSync(AUTH_FILE)) fs.unlinkSync(AUTH_FILE);
+    if (fs.existsSync(ACP_AUTH_FILE)) fs.unlinkSync(ACP_AUTH_FILE);
+    if (fs.existsSync(ACP_VERIFIED_FILE)) fs.unlinkSync(ACP_VERIFIED_FILE);
+    if (fs.existsSync(ACTIVE_FILE)) fs.unlinkSync(ACTIVE_FILE);
+    return name;
+  }
+
+  static saveProfile(name) {
+    if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
+      throw new Error('Profile name must contain only letters, numbers, hyphens, or underscores.');
+    }
+    if (!fs.existsSync(AUTH_FILE)) {
+      throw new Error(`Active session token (${AUTH_FILE}) does not exist. Please authenticate with agy first.`);
+    }
+
+    const targetPath = path.join(PROFILES_DIR, name);
+    fs.copyFileSync(AUTH_FILE, targetPath);
+    fs.chmodSync(targetPath, 0o600);
+    fs.writeFileSync(ACTIVE_FILE, name, 'utf8');
+
+    let hasAcp = false;
+    if (fs.existsSync(ACP_AUTH_FILE)) {
+      if (!fs.existsSync(ACP_PROFILES_DIR)) fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+      const acpTarget = path.join(ACP_PROFILES_DIR, name);
+      fs.copyFileSync(ACP_AUTH_FILE, acpTarget);
+      fs.chmodSync(acpTarget, 0o600);
+      hasAcp = true;
+    }
+
+    if (fs.existsSync(PENDING_FILE)) fs.unlinkSync(PENDING_FILE);
+    return { name, hasAcp };
+  }
+
+  static deleteProfile(name) {
+    const targetPath = path.join(PROFILES_DIR, name);
+    if (!fs.existsSync(targetPath)) {
+      throw new Error(`Profile '${name}' does not exist.`);
+    }
+    fs.unlinkSync(targetPath);
+    const acpTarget = path.join(ACP_PROFILES_DIR, name);
+    if (fs.existsSync(acpTarget)) {
+      try { fs.unlinkSync(acpTarget); } catch (_) {}
+    }
+    if (fs.existsSync(ACTIVE_FILE)) {
+      const saved = fs.readFileSync(ACTIVE_FILE, 'utf8').trim();
+      if (saved === name) fs.unlinkSync(ACTIVE_FILE);
+    }
+    return name;
+  }
+
+  static renameProfile(oldName, newName) {
+    if (!newName || !/^[a-zA-Z0-9_-]+$/.test(newName)) {
+      throw new Error('New profile name must contain only letters, numbers, hyphens, or underscores.');
+    }
+    const oldPath = path.join(PROFILES_DIR, oldName);
+    const newPath = path.join(PROFILES_DIR, newName);
+    if (!fs.existsSync(oldPath)) {
+      throw new Error(`Profile '${oldName}' does not exist.`);
+    }
+    if (fs.existsSync(newPath) && oldName !== newName) {
+      throw new Error(`Profile '${newName}' already exists.`);
+    }
+    fs.renameSync(oldPath, newPath);
+
+    const oldAcp = path.join(ACP_PROFILES_DIR, oldName);
+    const newAcp = path.join(ACP_PROFILES_DIR, newName);
+    if (fs.existsSync(oldAcp)) {
+      try { fs.renameSync(oldAcp, newAcp); } catch (_) {}
+    }
+
+    if (fs.existsSync(ACTIVE_FILE)) {
+      const saved = fs.readFileSync(ACTIVE_FILE, 'utf8').trim();
+      if (saved === oldName) fs.writeFileSync(ACTIVE_FILE, newName, 'utf8');
+    }
+    return newName;
+  }
+
+  static saveAcpProfile(name) {
+    const targetName = name || this.getActiveProfile();
+    if (!targetName) {
+      throw new Error('No profile specified and no active profile detected.');
+    }
+    if (!fs.existsSync(ACP_AUTH_FILE)) {
+      throw new Error(`Active ACP token (${ACP_AUTH_FILE}) does not exist. Run /agy auth in Pi first.`);
+    }
+    if (!fs.existsSync(ACP_PROFILES_DIR)) fs.mkdirSync(ACP_PROFILES_DIR, { recursive: true });
+    const target = path.join(ACP_PROFILES_DIR, targetName);
+    fs.copyFileSync(ACP_AUTH_FILE, target);
+    fs.chmodSync(target, 0o600);
+    return targetName;
+  }
+}
+
+// Interactive TUI Application
+class TUI {
+  constructor() {
+    this.selectedIndex = 0;
+    this.statusMessage = '';
+    this.statusType = 'info'; // 'info' | 'success' | 'warn' | 'error'
+    this.statusTimer = null;
+
+    // Modal state: null | { type: 'add'|'save'|'rename'|'delete'|'help'|'post_add', input: string, target?: string }
+    this.modal = null;
+
+    this.profiles = [];
+    this.active = null;
+    this.pending = null;
+
+    this.running = false;
+  }
+
+  start() {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      console.error('TUI mode requires an interactive TTY terminal.');
+      process.exit(1);
+    }
+
+    this.running = true;
+
+    // Setup terminal: alternate buffer, clear screen, hide cursor
+    process.stdout.write('\x1b[?1049h\x1b[H\x1b[?25l');
+
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.setRawMode) {
+      process.stdin.setRawMode(true);
+    }
+
+    process.stdin.on('keypress', (str, key) => this.handleKey(str, key));
+    process.stdout.on('resize', () => this.render());
+
+    const cleanup = () => {
+      this.cleanupTerminal();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('exit', () => this.cleanupTerminal());
+
+    this.refreshData();
+    this.render();
+  }
+
+  cleanupTerminal() {
+    if (!this.running) return;
+    this.running = false;
+    process.stdout.write('\x1b[?25h\x1b[?1049l');
+  }
+
+  setStatus(msg, type = 'info', timeoutMs = 4000) {
+    this.statusMessage = msg;
+    this.statusType = type;
+    if (this.statusTimer) clearTimeout(this.statusTimer);
+    if (timeoutMs > 0) {
+      this.statusTimer = setTimeout(() => {
+        this.statusMessage = '';
+        this.render();
+      }, timeoutMs);
+    }
+  }
+
+  refreshData() {
+    const res = ProfileManager.getProfiles();
+    this.profiles = res.profiles;
+    this.active = res.active;
+    this.pending = ProfileManager.getPending();
+
+    if (this.selectedIndex >= this.profiles.length) {
+      this.selectedIndex = Math.max(0, this.profiles.length - 1);
+    }
+  }
+
+  handleKey(str, key) {
+    if (!key) return;
+
+    // Global Quit
+    if (key.ctrl && key.name === 'c') {
+      this.cleanupTerminal();
+      process.exit(0);
+    }
+
+    // Modal Handling
+    if (this.modal) {
+      this.handleModalKey(str, key);
+      this.render();
+      return;
+    }
+
+    // Normal Navigation
+    switch (key.name) {
+      case 'up':
+      case 'k':
+        if (this.profiles.length > 0) {
+          this.selectedIndex = (this.selectedIndex - 1 + this.profiles.length) % this.profiles.length;
+          this.render();
+        }
+        break;
+
+      case 'down':
+      case 'j':
+        if (this.profiles.length > 0) {
+          this.selectedIndex = (this.selectedIndex + 1) % this.profiles.length;
+          this.render();
+        }
+        break;
+
+      case 'home':
+        this.selectedIndex = 0;
+        this.render();
+        break;
+
+      case 'end':
+        this.selectedIndex = Math.max(0, this.profiles.length - 1);
+        this.render();
+        break;
+
+      case 'return':
+      case 'enter':
+      case 'space':
+        if (this.profiles.length > 0) {
+          const selected = this.profiles[this.selectedIndex];
+          try {
+            const res = ProfileManager.switchProfile(selected.name);
+            this.refreshData();
+            const acpMsg = res.hasAcp ? ' [CLI+ACP]' : ' [CLI only; run /agy auth in Pi for ACP]';
+            this.setStatus(`✓ Switched to '${selected.name}'${acpMsg}. Restart agy or /reload Pi.`, res.hasAcp ? 'success' : 'warn', 6000);
+          } catch (err) {
+            this.setStatus(`Error: ${err.message}`, 'error');
+          }
+          this.render();
+        }
+        break;
+
+      case 'a':
+        this.modal = { type: 'add', input: '' };
+        this.render();
+        break;
+
+      case 's':
+        this.modal = { type: 'save', input: '' };
+        this.render();
+        break;
+
+      case 'r':
+        if (this.profiles.length > 0) {
+          const sel = this.profiles[this.selectedIndex];
+          this.modal = { type: 'rename', target: sel.name, input: sel.name };
+          this.render();
+        }
+        break;
+
+      case 'd':
+      case 'x':
+      case 'delete':
+        if (this.profiles.length > 0) {
+          const sel = this.profiles[this.selectedIndex];
+          this.modal = { type: 'delete', target: sel.name };
+          this.render();
+        }
+        break;
+
+      case 'q':
+      case 'escape':
+        this.cleanupTerminal();
+        process.exit(0);
+        break;
+
+      case 'question':
+      case 'h':
+        this.modal = { type: 'help' };
+        this.render();
+        break;
+    }
+  }
+
+  handleModalKey(str, key) {
+    if (key.name === 'escape') {
+      this.modal = null;
+      return;
+    }
+
+    if (this.modal.type === 'help') {
+      if (key.name === 'return' || key.name === 'enter' || key.name === 'space' || key.name === 'q' || key.name === 'escape') {
+        this.modal = null;
+      }
+      return;
+    }
+
+    if (this.modal.type === 'post_add') {
+      if (key.name === 'return' || key.name === 'enter' || key.name === 'space' || key.name === 'q' || key.name === 'escape') {
+        this.modal = null;
+        this.cleanupTerminal();
+        console.log(`\n${c.bold}${c.cyan}=== Setup Ready for Account: '${this.pending}' ===${c.reset}`);
+        console.log(`1. Run ${c.bold}${c.cyan}agy${c.reset} in your terminal.`);
+        console.log(`2. Complete the Google browser sign-in.`);
+        console.log(`3. Credentials will automatically be saved as profile '${c.bold}${this.pending}${c.reset}'.\n`);
+        process.exit(0);
+      }
+      return;
+    }
+
+    if (this.modal.type === 'delete') {
+      if (str === 'y' || str === 'Y' || key.name === 'return') {
+        try {
+          ProfileManager.deleteProfile(this.modal.target);
+          this.refreshData();
+          this.setStatus(`✓ Deleted profile '${this.modal.target}'.`, 'success');
+        } catch (err) {
+          this.setStatus(`Error: ${err.message}`, 'error');
+        }
+        this.modal = null;
+      } else if (str === 'n' || str === 'N' || key.name === 'escape') {
+        this.modal = null;
+      }
+      return;
+    }
+
+    // Text Input for Add / Save / Rename
+    if (key.name === 'return' || key.name === 'enter') {
+      const val = this.modal.input.trim();
+      if (!val) {
+        this.modal = null;
+        return;
+      }
+
+      try {
+        if (this.modal.type === 'add') {
+          ProfileManager.addProfile(val);
+          this.refreshData();
+          this.modal = { type: 'post_add', target: val };
+          return;
+        } else if (this.modal.type === 'save') {
+          ProfileManager.saveProfile(val);
+          this.refreshData();
+          this.setStatus(`✓ Saved current session as profile '${val}'.`, 'success');
+          this.modal = null;
+        } else if (this.modal.type === 'rename') {
+          ProfileManager.renameProfile(this.modal.target, val);
+          this.refreshData();
+          this.setStatus(`✓ Renamed profile '${this.modal.target}' to '${val}'.`, 'success');
+          this.modal = null;
+        }
+      } catch (err) {
+        this.setStatus(`Error: ${err.message}`, 'error');
+        this.modal = null;
+      }
+      return;
+    }
+
+    if (key.name === 'backspace') {
+      this.modal.input = this.modal.input.slice(0, -1);
+      return;
+    }
+
+    if (str && /^[\x20-\x7E]$/.test(str)) {
+      this.modal.input += str;
+    }
+  }
+
+  render() {
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
+
+    const buf = [];
+    const push = line => buf.push(line);
+
+    // Clear Screen
+    push('\x1b[H\x1b[2J');
+
+    // 1. Header Box
+    const headerTitle = ` 🚀 AGY ACCOUNT SWITCHER `;
+    const headerSub = ` Google Account Switcher for Antigravity CLI `;
+    const innerW = cols - 4;
+
+    push(`${c.cyan}╭${'─'.repeat(cols - 2)}╮${c.reset}`);
+    const hText = `${c.bold}${c.brightWhite}${headerTitle}${c.reset}${c.dim}${headerSub}${c.reset}`;
+    push(`${c.cyan}│${c.reset} ${padRight(hText, innerW + 10)} ${c.cyan}│${c.reset}`);
+    push(`${c.cyan}╰${'─'.repeat(cols - 2)}╯${c.reset}`);
+
+    let currentY = 3;
+
+    // 2. Pending Notice (if exists)
+    if (this.pending) {
+      const pMsg = ` ⏳ PENDING LOGIN: '${this.pending}' is waiting for Google sign-in. Run 'agy' in terminal to complete. `;
+      push(`${c.yellow}╭${'─'.repeat(cols - 2)}╮${c.reset}`);
+      push(`${c.yellow}│${c.reset} ${padRight(c.bold + c.yellow + pMsg + c.reset, innerW + 10)} ${c.yellow}│${c.reset}`);
+      push(`${c.yellow}╰${'─'.repeat(cols - 2)}╯${c.reset}`);
+      currentY += 3;
+    }
+
+    // 3. Main Area: Split or Single View
+    const contentH = rows - currentY - 5; // Leave room for status & footer
+    const isSplit = cols >= 72;
+
+    const listW = isSplit ? Math.min(36, Math.floor(cols * 0.45)) : cols - 2;
+    const detailW = isSplit ? cols - listW - 5 : 0;
+
+    // Draw Panels
+    if (isSplit) {
+      // Header for panels
+      const leftHeader = ` Profile List (${this.profiles.length}) `;
+      const rightHeader = ` Profile Details `;
+
+      push(`${c.blue}╭${'─'.repeat(listW)}┬${'─'.repeat(detailW)}╮${c.reset}`);
+      push(`${c.blue}│${c.bold}${c.brightCyan}${padRight(leftHeader, listW)}${c.reset}${c.blue}│${c.bold}${c.brightCyan}${padRight(rightHeader, detailW)}${c.reset}${c.blue}│${c.reset}`);
+      push(`${c.blue}├${'─'.repeat(listW)}┼${'─'.repeat(detailW)}┤${c.reset}`);
+
+      const selProfile = this.profiles[this.selectedIndex] || null;
+
+      for (let i = 0; i < contentH; i++) {
+        // Left Column item
+        let leftCol = '';
+        if (i < this.profiles.length) {
+          const p = this.profiles[i];
+          const isSelected = i === this.selectedIndex;
+          const isCurrentActive = p.active;
+
+          const cursor = isSelected ? `${c.brightCyan}▶${c.reset}` : ' ';
+          const badge = isCurrentActive ? `${c.brightGreen}● [ACTIVE]${c.reset}` : `${c.gray}○         ${c.reset}`;
+          const pName = truncate(p.name, listW - 14);
+
+          if (isSelected) {
+            leftCol = ` ${cursor} ${c.bold}${c.brightWhite}${c.bgDarkGray}${padRight(pName, listW - 14)}${c.reset} ${badge}`;
+          } else {
+            leftCol = ` ${cursor} ${padRight(pName, listW - 14)} ${badge}`;
+          }
+        } else if (this.profiles.length === 0 && i === 1) {
+          leftCol = `  ${c.dim}(No profiles saved)${c.reset}`;
+        }
+
+        // Right Column detail lines
+        let rightCol = '';
+        if (selProfile) {
+          switch (i) {
+            case 0:
+              rightCol = ` ${c.bold}Name:${c.reset} ${c.brightCyan}${selProfile.name}${c.reset}`;
+              break;
+            case 1:
+              rightCol = ` ${c.bold}Status:${c.reset} ${selProfile.active ? c.brightGreen + '● Active' + c.reset : c.gray + '○ Inactive' + c.reset}`;
+              break;
+            case 2:
+              rightCol = ` ${c.bold}Auth Type:${c.reset} ${selProfile.authMethod}`;
+              break;
+            case 3:
+              rightCol = ` ${c.bold}CLI Token:${c.reset} ${selProfile.hasRefreshToken ? c.green + 'Available (Auto-renew)' + c.reset : c.yellow + 'None' + c.reset}`;
+              break;
+            case 4:
+              rightCol = ` ${c.bold}ACP Token:${c.reset} ${selProfile.hasAcp ? c.green + 'Available (Synced)' + c.reset : c.yellow + 'Missing (run /agy auth in Pi)' + c.reset}`;
+              break;
+            case 5:
+              let expStr = 'Unknown';
+              if (selProfile.expiry) {
+                const diffMs = selProfile.expiry.getTime() - Date.now();
+                if (diffMs > 0) {
+                  const mins = Math.round(diffMs / 60000);
+                  expStr = `${selProfile.expiry.toLocaleTimeString()} (${mins}m remaining)`;
+                } else {
+                  expStr = `${c.yellow}Needs Refresh (Auto-renews on launch)${c.reset}`;
+                }
+              }
+              rightCol = ` ${c.bold}Token Expiry:${c.reset} ${expStr}`;
+              break;
+            case 6:
+              rightCol = ` ${c.bold}CLI File:${c.reset} ${c.dim}~/.gemini/profiles/${selProfile.name}${c.reset}`;
+              break;
+            case 7:
+              rightCol = ` ${c.bold}ACP File:${c.reset} ${selProfile.hasAcp ? c.dim + '~/.gemini/profiles/.acp/' + selProfile.name + c.reset : c.yellow + '(Not linked yet)' + c.reset}`;
+              break;
+            case 8:
+              rightCol = ` ${c.dim}Press ${c.bold}[Enter]${c.reset}${c.dim} to switch. Restart agy or /reload Pi.${c.reset}`;
+              break;
+          }
+        } else if (this.profiles.length === 0 && i === 1) {
+          rightCol = ` ${c.yellow}Press [a] to add a new Google account.${c.reset}`;
+        }
+
+        push(`${c.blue}│${c.reset}${padRight(leftCol, listW)}${c.blue}│${c.reset}${padRight(rightCol, detailW)}${c.blue}│${c.reset}`);
+      }
+
+      push(`${c.blue}╰${'─'.repeat(listW)}┴${'─'.repeat(detailW)}╯${c.reset}`);
+    } else {
+      // Single column layout
+      push(`${c.blue}╭${'─'.repeat(listW)}╮${c.reset}`);
+      for (let i = 0; i < contentH; i++) {
+        let line = '';
+        if (i < this.profiles.length) {
+          const p = this.profiles[i];
+          const isSelected = i === this.selectedIndex;
+          const cursor = isSelected ? `${c.brightCyan}▶${c.reset}` : ' ';
+          const badge = p.active ? `${c.brightGreen}● [ACTIVE]${c.reset}` : `${c.gray}○${c.reset}`;
+          line = ` ${cursor} ${padRight(p.name, listW - 16)} ${badge}`;
+        }
+        push(`${c.blue}│${c.reset}${padRight(line, listW)}${c.blue}│${c.reset}`);
+      }
+      push(`${c.blue}╰${'─'.repeat(listW)}╯${c.reset}`);
+    }
+
+    // 4. Status Message Line
+    let statusFormatted = ' ';
+    if (this.statusMessage) {
+      if (this.statusType === 'success') {
+        statusFormatted = `${c.bold}${c.green}${this.statusMessage}${c.reset}`;
+      } else if (this.statusType === 'error') {
+        statusFormatted = `${c.bold}${c.red}${this.statusMessage}${c.reset}`;
+      } else if (this.statusType === 'warn') {
+        statusFormatted = `${c.bold}${c.yellow}${this.statusMessage}${c.reset}`;
+      } else {
+        statusFormatted = `${c.cyan}${this.statusMessage}${c.reset}`;
+      }
+    }
+    push(` ${statusFormatted}`);
+
+    // 5. Keybinding Action Bar
+    const keyActions = [
+      `${c.bold}[↑/↓/j/k]${c.reset} Move`,
+      `${c.bold}[Enter]${c.reset} Switch`,
+      `${c.bold}[a]${c.reset} Add`,
+      `${c.bold}[s]${c.reset} Save`,
+      `${c.bold}[r]${c.reset} Rename`,
+      `${c.bold}[d]${c.reset} Delete`,
+      `${c.bold}[?]${c.reset} Help`,
+      `${c.bold}[q]${c.reset} Quit`,
+    ].join('  ');
+
+    push(`${c.dim} ${keyActions}${c.reset}`);
+
+    // 6. Draw Modal Dialog if Active
+    if (this.modal) {
+      this.drawModal(cols, rows, buf);
+    }
+
+    process.stdout.write(buf.join('\n'));
+  }
+
+  drawModal(cols, rows, buf) {
+    const modalW = Math.min(60, cols - 6);
+    let modalTitle = '';
+    let modalBody = [];
+
+    if (this.modal.type === 'add') {
+      modalTitle = ' + Add New Google Account ';
+      modalBody = [
+        'Enter profile name for the new account:',
+        `> ${c.bold}${c.brightCyan}${this.modal.input}${c.reset}_`,
+        '',
+        `${c.dim}[Enter] Confirm  [Esc] Cancel${c.reset}`,
+      ];
+    } else if (this.modal.type === 'save') {
+      modalTitle = ' 💾 Save Current Session ';
+      modalBody = [
+        'Enter profile name to save active token as:',
+        `> ${c.bold}${c.brightCyan}${this.modal.input}${c.reset}_`,
+        '',
+        `${c.dim}[Enter] Save  [Esc] Cancel${c.reset}`,
+      ];
+    } else if (this.modal.type === 'rename') {
+      modalTitle = ` ✏ Rename Profile '${this.modal.target}' `;
+      modalBody = [
+        'Enter new profile name:',
+        `> ${c.bold}${c.brightCyan}${this.modal.input}${c.reset}_`,
+        '',
+        `${c.dim}[Enter] Rename  [Esc] Cancel${c.reset}`,
+      ];
+    } else if (this.modal.type === 'delete') {
+      modalTitle = ` 🗑 Delete Profile `;
+      modalBody = [
+        `Are you sure you want to delete '${c.bold}${this.modal.target}${c.reset}'?`,
+        '',
+        `${c.bold}${c.red}[y] Confirm Delete${c.reset}   ${c.dim}[n / Esc] Cancel${c.reset}`,
+      ];
+    } else if (this.modal.type === 'post_add') {
+      modalTitle = ` ✓ Setup Ready for '${this.modal.target}' `;
+      modalBody = [
+        'Next Steps to Authenticate:',
+        `1. Press ${c.bold}[Enter]${c.reset} to exit agy-switch.`,
+        `2. Run ${c.bold}${c.cyan}agy${c.reset} in your terminal.`,
+        '3. Complete the Google login in your browser.',
+        `4. Credentials will automatically save as '${c.bold}${this.modal.target}${c.reset}'!`,
+        '',
+        `${c.bold}[Enter / q] Exit to Terminal${c.reset}`,
+      ];
+    } else if (this.modal.type === 'help') {
+      modalTitle = ' ℹ agy-switch Keybindings ';
+      modalBody = [
+        `${c.bold}↑ / ↓ / j / k${c.reset}  : Navigate profile list`,
+        `${c.bold}Enter / Space${c.reset}  : Switch active Google account`,
+        `${c.bold}a${c.reset}              : Add new Google account profile`,
+        `${c.bold}s${c.reset}              : Save current session as a profile`,
+        `${c.bold}r${c.reset}              : Rename selected profile`,
+        `${c.bold}d / x${c.reset}          : Delete selected profile`,
+        `${c.bold}q / Esc${c.reset}        : Exit agy-switch`,
+        '',
+        `${c.dim}Press any key to close this help window.${c.reset}`,
+      ];
+    }
+
+    const modalH = modalBody.length + 2;
+    const startY = Math.max(2, Math.floor((rows - modalH) / 2));
+    const startX = Math.max(2, Math.floor((cols - modalW) / 2));
+
+    // Overwrite buffer positions with ANSI cursor positioning for dialog
+    let overlay = [];
+    overlay.push(`\x1b[${startY};${startX}H${c.bgBlue}${c.brightWhite}╭${'─'.repeat(modalW - 2)}╮${c.reset}`);
+
+    const headerPad = modalW - 4 - stripAnsi(modalTitle).length;
+    const headerLine = ` ${c.bold}${modalTitle}${c.reset}${' '.repeat(Math.max(0, headerPad))} `;
+    overlay.push(`\x1b[${startY + 1};${startX}H${c.bgBlue}${c.brightWhite}│${c.reset}${c.bgBlack}${headerLine}${c.bgBlue}${c.brightWhite}│${c.reset}`);
+    overlay.push(`\x1b[${startY + 2};${startX}H${c.bgBlue}${c.brightWhite}├${'─'.repeat(modalW - 2)}┤${c.reset}`);
+
+    modalBody.forEach((bLine, idx) => {
+      const y = startY + 3 + idx;
+      const bPad = modalW - 4 - stripAnsi(bLine).length;
+      const rowContent = ` ${bLine}${' '.repeat(Math.max(0, bPad))} `;
+      overlay.push(`\x1b[${y};${startX}H${c.bgBlue}${c.brightWhite}│${c.reset}${c.bgBlack}${rowContent}${c.bgBlue}${c.brightWhite}│${c.reset}`);
+    });
+
+    const endY = startY + 3 + modalBody.length;
+    overlay.push(`\x1b[${endY};${startX}H${c.bgBlue}${c.brightWhite}╰${'─'.repeat(modalW - 2)}╯${c.reset}`);
+
+    buf.push(overlay.join(''));
+  }
+}
+
+// CLI Dispatcher (Headless / Subcommand Mode)
+function runCLI() {
+  const args = process.argv.slice(2);
+  const cmd = args[0] || '';
+
+  // If no arguments and running in an interactive terminal, launch TUI
+  if (!cmd) {
+    if (process.stdout.isTTY && process.stdin.isTTY) {
+      const tui = new TUI();
+      tui.start();
+      return;
+    } else {
+      cmdList();
+      return;
+    }
+  }
+
+  switch (cmd) {
+    case 'tui':
+      new TUI().start();
+      break;
+
+    case 'list':
+    case 'ls':
+      cmdList();
+      break;
+
+    case 'json':
+      cmdJson();
+      break;
+
+    case 'current':
+    case 'status':
+    case 'whoami':
+      cmdCurrent();
+      break;
+
+    case 'switch':
+      cmdSwitch(args[1]);
+      break;
+
+    case 'add':
+    case 'new':
+      cmdAdd(args[1]);
+      break;
+
+    case 'save':
+      cmdSave(args[1]);
+      break;
+
+    case 'save-acp':
+      try {
+        const saved = ProfileManager.saveAcpProfile(args[1]);
+        console.log(`${c.green}✓ Saved active ACP credentials for profile '${c.bold}${saved}${c.reset}${c.green}'.${c.reset}`);
+      } catch (err) {
+        console.error(`${c.red}Error: ${err.message}${c.reset}`);
+        process.exit(1);
+      }
+      break;
+
+    case 'delete':
+    case 'rm':
+    case 'remove':
+      cmdDelete(args[1]);
+      break;
+
+    case 'rename':
+    case 'mv':
+      cmdRename(args[1], args[2]);
+      break;
+
+    case 'sync':
+    case 'auto-sync':
+      ProfileManager.sync();
+      cmdList();
+      break;
+
+    case 'completion':
+      cmdCompletion(args[1]);
+      break;
+
+    case 'help':
+    case '--help':
+    case '-h':
+      cmdHelp();
+      break;
+
+    default:
+      // Direct profile switch shortcut: `agy-switch <profile>`
+      if (fs.existsSync(path.join(PROFILES_DIR, cmd))) {
+        cmdSwitch(cmd);
+      } else {
+        console.error(`${c.red}Unknown command or profile: '${cmd}'${c.reset}\n`);
+        cmdHelp();
+        process.exit(1);
+      }
+      break;
+  }
+}
+
+function cmdList() {
+  const { profiles, active } = ProfileManager.getProfiles();
+  const pending = ProfileManager.getPending();
+
+  console.log(`${c.bold}Google Account Profiles in ${c.cyan}${PROFILES_DIR}${c.reset}:`);
+  if (profiles.length === 0) {
+    console.log(`  ${c.yellow}(No profiles saved yet. Run 'agy-switch' or 'agy-switch add <name>')${c.reset}`);
+  } else {
+    for (const p of profiles) {
+      const acpStatus = p.hasAcp ? `${c.dim}[CLI+ACP]${c.reset}` : `${c.yellow}[CLI only]${c.reset}`;
+      if (p.active) {
+        console.log(`  ${c.green}● ${p.name.padEnd(20)} ${c.bold}[ACTIVE]${c.reset}  ${acpStatus}`);
+      } else {
+        console.log(`  ${c.gray}○${c.reset} ${p.name.padEnd(20)}           ${acpStatus}`);
+      }
+    }
+  }
+
+  if (fs.existsSync(AUTH_FILE) && !active) {
+    console.log(`\n  ${c.yellow}! Current active session is not saved as a profile.${c.reset}`);
+    console.log(`    Run '${c.cyan}agy-switch save <name>${c.reset}' to save it.`);
+  }
+
+  if (pending) {
+    console.log(`\n  ${c.yellow}⏳ Pending Setup: Profile '${c.bold}${pending}${c.reset}${c.yellow}' waiting for Google browser sign-in.${c.reset}`);
+    console.log(`     Run '${c.cyan}agy${c.reset}' in your terminal to complete authentication.`);
+  }
+}
+
+function cmdJson() {
+  const { profiles, active } = ProfileManager.getProfiles();
+  const pending = ProfileManager.getPending() || '';
+
+  const jsonProfiles = profiles.map(p => ({
+    name: p.name,
+    active: p.active,
+    authMethod: p.authMethod,
+    expiry: p.expiry,
+    hasRefreshToken: p.hasRefreshToken,
+    hasAcp: p.hasAcp,
+    mtime: p.mtime,
+  }));
+
+  console.log(JSON.stringify({ active: active || '', pending, profiles: jsonProfiles }));
+}
+
+function cmdCurrent() {
+  const active = ProfileManager.getActiveProfile();
+  if (active) {
+    console.log(active);
+  } else {
+    console.error(`${c.yellow}(No active profile detected or unsaved session)${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdSwitch(name) {
+  if (!name) {
+    console.error(`${c.red}Error: Profile name required.${c.reset}`);
+    console.error(`Usage: ${c.cyan}agy-switch <profile-name>${c.reset} or ${c.cyan}agy-switch switch <profile-name>${c.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    const { hasAcp } = ProfileManager.switchProfile(name);
+    console.log(`${c.green}✓ Switched active Google account to '${c.bold}${name}${c.reset}${c.green}'.${c.reset}`);
+    if (hasAcp) {
+      console.log(`${c.green}✓ Synced both Antigravity CLI and ACP tokens.${c.reset}`);
+    } else {
+      console.log(`${c.yellow}⚠ Notice: ACP token not found for '${name}'. In Pi, run '/agy auth' to link ACP credentials.${c.reset}`);
+    }
+    console.log(`${c.dim}ℹ Restart any running agy instance or run /reload in Pi for the changes to apply.${c.reset}`);
+  } catch (err) {
+    console.error(`${c.red}Error: ${err.message}${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdAdd(name) {
+  if (!name) {
+    console.error(`${c.red}Error: Profile name required.${c.reset}`);
+    console.error(`Usage: ${c.cyan}agy-switch add <profile-name>${c.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    ProfileManager.addProfile(name);
+    console.log(`\n${c.bold}${c.cyan}=== Prepared Setup for New Account: '${name}' ===${c.reset}`);
+    console.log(`1. Exit any running agy instance (${c.dim}Ctrl+D Ctrl+D${c.reset}).`);
+    console.log(`2. Run ${c.bold}${c.cyan}agy${c.reset} in your terminal.`);
+    console.log(`3. Complete the Google browser login prompt.`);
+    console.log(`4. The credentials will automatically be saved as profile '${c.bold}${name}${c.reset}'.\n`);
+  } catch (err) {
+    console.error(`${c.red}Error: ${err.message}${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdSave(name) {
+  if (!name) {
+    console.error(`${c.red}Error: Profile name required.${c.reset}`);
+    console.error(`Usage: ${c.cyan}agy-switch save <profile-name>${c.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    const { hasAcp } = ProfileManager.saveProfile(name);
+    console.log(`${c.green}✓ Successfully saved active credentials as profile '${c.bold}${name}${c.reset}${c.green}'.${c.reset}`);
+    if (hasAcp) {
+      console.log(`${c.green}✓ Saved both CLI and ACP credentials.${c.reset}`);
+    } else {
+      console.log(`${c.dim}ℹ Note: No ACP credentials detected to save for this profile.${c.reset}`);
+    }
+  } catch (err) {
+    console.error(`${c.red}Error: ${err.message}${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdDelete(name) {
+  if (!name) {
+    console.error(`${c.red}Error: Profile name required.${c.reset}`);
+    console.error(`Usage: ${c.cyan}agy-switch delete <profile-name>${c.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    ProfileManager.deleteProfile(name);
+    console.log(`${c.green}✓ Deleted profile '${c.bold}${name}${c.reset}${c.green}'.${c.reset}`);
+  } catch (err) {
+    console.error(`${c.red}Error: ${err.message}${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdRename(oldName, newName) {
+  if (!oldName || !newName) {
+    console.error(`${c.red}Error: Old and new profile names required.${c.reset}`);
+    console.error(`Usage: ${c.cyan}agy-switch rename <old-name> <new-name>${c.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    ProfileManager.renameProfile(oldName, newName);
+    console.log(`${c.green}✓ Renamed profile '${c.bold}${oldName}${c.reset}${c.green}' to '${c.bold}${newName}${c.reset}${c.green}'.${c.reset}`);
+  } catch (err) {
+    console.error(`${c.red}Error: ${err.message}${c.reset}`);
+    process.exit(1);
+  }
+}
+
+function cmdCompletion(shellType = 'bash') {
+  if (shellType === 'zsh') {
+    console.log(`#compdef agy-switch switch-account agy-account
+
+_agy_switch() {
+  local -a subcommands
+  subcommands=(
+    'tui:Launch interactive TUI interface'
+    'switch:Switch active account to profile'
+    'list:List all saved profiles'
+    'current:Show currently active profile'
+    'add:Add and prepare login for a new account'
+    'save:Save current active token as a profile'
+    'delete:Delete a saved profile'
+    'rename:Rename a profile'
+    'json:Output profiles in JSON format'
+    'sync:Sync pending logins or refreshed tokens'
+    'completion:Generate shell completion script'
+    'help:Show help information'
+  )
+
+  local -a profiles
+  local pdir="${HOME}/.gemini/profiles"
+  if [ -d "$pdir" ]; then
+    for f in "$pdir"/*(N); do
+      local b="$(basename "$f")"
+      [[ "$b" == .* ]] && continue
+      profiles+=("$b")
+    done
+  fi
+
+  if (( CURRENT == 2 )); then
+    _describe -t subcommands 'command' subcommands
+    _describe -t profiles 'profile' profiles
+  elif (( CURRENT == 3 )); then
+    case "$words[2]" in
+      switch|delete|rm|remove|rename|mv)
+        _describe -t profiles 'profile' profiles
+        ;;
+    esac
+  fi
+}
+
+_agy_switch "$@"`);
+  } else {
+    console.log(`_agy_switch_completions() {
+  local cur prev
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+
+  local commands="tui switch list current add save delete rename json sync completion help"
+  local pdir="\${HOME}/.gemini/profiles"
+  local profiles=""
+  if [ -d "$pdir" ]; then
+    profiles=$(find "$pdir" -maxdepth 1 -type f ! -name ".*" -exec basename {} \\; 2>/dev/null)
+  fi
+
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "\${commands} \${profiles}" -- "$cur") )
+  elif [ "$COMP_CWORD" -eq 2 ]; then
+    case "$prev" in
+      switch|delete|rm|remove|rename|mv)
+        COMPREPLY=( $(compgen -W "\${profiles}" -- "$cur") )
+        ;;
+      completion)
+        COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
+        ;;
+    esac
+  fi
+}
+
+complete -F _agy_switch_completions agy-switch switch-account agy-account`);
+  }
+}
+
+function cmdHelp() {
+  console.log(`${c.bold}${c.cyan}agy-switch${c.reset} - Google Account Switcher TUI & CLI for Antigravity CLI (agy) & Pi ACP Bridge\n`);
+  console.log(`${c.bold}USAGE:${c.reset}`);
+  console.log(`  ${c.cyan}agy-switch${c.reset}                      Launch interactive TUI application`);
+  console.log(`  ${c.cyan}agy-switch <name>${c.reset}               Directly switch to <name>`);
+  console.log(`  ${c.cyan}agy-switch switch <name>${c.reset}        Directly switch to <name>`);
+  console.log(`  ${c.cyan}agy-switch list${c.reset}                 List all saved profiles (CLI & ACP status)`);
+  console.log(`  ${c.cyan}agy-switch current${c.reset}              Print current active profile name`);
+  console.log(`  ${c.cyan}agy-switch add <name>${c.reset}           Prepare login for a new account`);
+  console.log(`  ${c.cyan}agy-switch save <name>${c.reset}          Save current active session (CLI & ACP) as a profile`);
+  console.log(`  ${c.cyan}agy-switch save-acp [name]${c.reset}     Save current ACP credentials to a profile`);
+  console.log(`  ${c.cyan}agy-switch delete <name>${c.reset}        Delete a saved profile`);
+  console.log(`  ${c.cyan}agy-switch rename <old> <new>${c.reset}   Rename a profile`);
+  console.log(`  ${c.cyan}agy-switch json${c.reset}                 Output profile data in JSON`);
+  console.log(`  ${c.cyan}agy-switch sync${c.reset}                 Sync pending logins or refreshed tokens`);
+  console.log(`  ${c.cyan}agy-switch completion [bash|zsh]${c.reset} Output shell completion script`);
+  console.log(`  ${c.cyan}agy-switch help${c.reset}                 Show this help message\n`);
+  console.log(`${c.bold}TUI KEYBINDINGS:${c.reset}`);
+  console.log(`  ${c.bold}↑ / ↓ / j / k${c.reset}  Navigate profiles`);
+  console.log(`  ${c.bold}Enter / Space${c.reset}  Switch to selected account`);
+  console.log(`  ${c.bold}a${c.reset}              Add new account`);
+  console.log(`  ${c.bold}s${c.reset}              Save current session`);
+  console.log(`  ${c.bold}r${c.reset}              Rename selected profile`);
+  console.log(`  ${c.bold}d / x${c.reset}          Delete selected profile`);
+  console.log(`  ${c.bold}?${c.reset}              Toggle help dialog`);
+  console.log(`  ${c.bold}q / Esc${c.reset}        Quit\n`);
+  console.log(`${c.bold}ALIASES:${c.reset} switch-account, agy-account`);
+}
+
+// Entrypoint
+runCLI();

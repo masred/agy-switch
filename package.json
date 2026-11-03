@@ -1,0 +1,33 @@
+{
+  "name": "agy-switch",
+  "version": "1.0.0",
+  "description": "Interactive TUI & CLI Google Account Switcher for Google Antigravity CLI (agy) & Pi ACP Bridge",
+  "main": "bin/agy-switch",
+  "bin": {
+    "agy-switch": "bin/agy-switch",
+    "agy-account": "bin/agy-switch",
+    "switch-account": "bin/agy-switch"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node bin/agy-switch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/masred/agy-switch.git"
+  },
+  "keywords": [
+    "antigravity",
+    "gemini",
+    "agy",
+    "acp",
+    "account-switcher",
+    "tui",
+    "cli"
+  ],
+  "author": "Dwi Fitriyanto <dwifitriyanto123@gmail.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
