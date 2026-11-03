@@ -24,4 +24,4 @@ _agy_switch_completions() {
   fi
 }
 
-complete -F _agy_switch_completions agy-switch switch-account agy-account
+complete -F _agy_switch_completions agy-switch

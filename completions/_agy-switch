@@ -1,4 +1,4 @@
-#compdef agy-switch switch-account agy-account
+#compdef agy-switch
 
 _agy_switch() {
   local -a subcommands

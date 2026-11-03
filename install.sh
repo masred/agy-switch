@@ -8,11 +8,8 @@ mkdir -p "$INSTALL_DIR"
 
 chmod +x "$SCRIPT_SRC"
 ln -sf "$SCRIPT_SRC" "$INSTALL_DIR/agy-switch"
-ln -sf "$INSTALL_DIR/agy-switch" "$INSTALL_DIR/agy-account"
-ln -sf "$INSTALL_DIR/agy-switch" "$INSTALL_DIR/switch-account"
 
 echo "✓ Installed agy-switch to $INSTALL_DIR/agy-switch"
-echo "✓ Created symlinks: agy-account, switch-account"
 
 # Install completions if directory exists
 if [ -d "$HOME/.zsh/completions" ]; then

@@ -39,8 +39,6 @@ bun link
 
 ```bash
 ln -sf ~/labs/agy-switch/bin/agy-switch ~/.local/bin/agy-switch
-ln -sf ~/.local/bin/agy-switch ~/.local/bin/agy-account
-ln -sf ~/.local/bin/agy-switch ~/.local/bin/switch-account
 ```
 
 Make sure `~/.local/bin` is in your `$PATH`.
@@ -110,14 +108,6 @@ You can run `agy-switch` headlessly:
     └── .acp/
         └── <profile-name>           # Saved ACP tokens
 ```
-
----
-
-## 💡 Aliases
-
-`agy-switch` also ships with convenience aliases:
-- `agy-account`
-- `switch-account`
 
 ---
 

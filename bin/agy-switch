@@ -1191,7 +1191,7 @@ function cmdRename(oldName, newName) {
 
 function cmdCompletion(shellType = 'bash') {
   if (shellType === 'zsh') {
-    console.log(`#compdef agy-switch switch-account agy-account
+    console.log(`#compdef agy-switch
 
 _agy_switch() {
   local -a subcommands
@@ -1260,7 +1260,7 @@ _agy_switch "$@"`);
   fi
 }
 
-complete -F _agy_switch_completions agy-switch switch-account agy-account`);
+complete -F _agy_switch_completions agy-switch`);
   }
 }
 
@@ -1289,8 +1289,7 @@ function cmdHelp() {
   console.log(`  ${c.bold}r${c.reset}              Rename selected profile`);
   console.log(`  ${c.bold}d / x${c.reset}          Delete selected profile`);
   console.log(`  ${c.bold}?${c.reset}              Toggle help dialog`);
-  console.log(`  ${c.bold}q / Esc${c.reset}        Quit\n`);
-  console.log(`${c.bold}ALIASES:${c.reset} switch-account, agy-account`);
+  console.log(`  ${c.bold}q / Esc${c.reset}        Quit`);
 }
 
 // Entrypoint
