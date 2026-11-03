@@ -44,14 +44,12 @@ function copyFileAtomic(srcPath, destPath, mode = 0o600) {
  */
 function safeUnlinkSync(filePath) {
   try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
+    fs.unlinkSync(filePath);
+    return true;
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
+    return false;
   }
-  return false;
 }
 
 module.exports = {

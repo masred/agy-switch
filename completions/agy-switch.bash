@@ -4,7 +4,7 @@ _agy_switch_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   local commands="tui switch list current add save save-acp delete rename json sync completion help"
-  local pdir="${HOME}/.gemini/profiles"
+  local pdir="${AGY_PROFILES_DIR:-${GEMINI_DIR:-$HOME/.gemini}/profiles}"
   local profiles=""
   if [ -d "$pdir" ]; then
     profiles=$(find "$pdir" -maxdepth 1 -type f ! -name ".*" -exec basename {} \; 2>/dev/null)

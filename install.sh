@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "Error: Node.js (>=18.0.0) is required but not found in PATH." >&2
+  exit 1
+fi
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${HOME}/.local/bin"
 SCRIPT_SRC="${REPO_DIR}/bin/agy-switch"

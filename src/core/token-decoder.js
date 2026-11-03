@@ -30,15 +30,17 @@ function extractEmail(tokenData) {
     return tokenData.token.email.trim();
   }
 
-  // 2. Decode from id_token JWT
-  if (tokenData.token?.id_token) {
-    const payload = decodeJwtPayload(tokenData.token.id_token);
+  // 2. Decode from id_token JWT (nested in token or top-level)
+  const idToken = tokenData.token?.id_token || tokenData.id_token;
+  if (idToken) {
+    const payload = decodeJwtPayload(idToken);
     if (payload?.email) return payload.email;
   }
 
   // 3. Decode from access_token JWT if applicable
-  if (tokenData.token?.access_token) {
-    const payload = decodeJwtPayload(tokenData.token.access_token);
+  const accessToken = tokenData.token?.access_token || tokenData.access_token;
+  if (accessToken) {
+    const payload = decodeJwtPayload(accessToken);
     if (payload?.email) return payload.email;
   }
 

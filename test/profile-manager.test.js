@@ -204,6 +204,10 @@ test('saveAcpProfile saves current ACP credentials', () => {
     // When no ACP token exists, throws
     assert.throws(() => pm.saveAcpProfile('target-profile'), /does not exist/);
 
+    // Create CLI profile first
+    fs.mkdirSync(cfg.PROFILES_DIR, { recursive: true });
+    fs.writeFileSync(path.join(cfg.PROFILES_DIR, 'target-profile'), '{}');
+
     // When ACP token exists, saves
     fs.mkdirSync(path.dirname(cfg.ACP_AUTH_FILE), { recursive: true });
     fs.writeFileSync(cfg.ACP_AUTH_FILE, JSON.stringify({ refresh_token: 'acp-test' }));
@@ -251,6 +255,62 @@ test('single pass loadState auto-syncs refreshed token and ACP token', () => {
     // Verify ACP profile was auto-captured
     const acpSaved = fs.readFileSync(path.join(cfg.ACP_PROFILES_DIR, 'my-account'), 'utf8');
     assert.equal(JSON.parse(acpSaved).refresh_token, 'acp-new');
+  } finally {
+    cleanup();
+  }
+});
+
+test('switchProfile auto-backs up unsaved active session to prevent data loss', () => {
+  const { pm, cfg, cleanup } = setupTestEnvironment();
+  try {
+    // 1. Create a saved profile 'target-profile'
+    fs.mkdirSync(cfg.PROFILES_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(cfg.PROFILES_DIR, 'target-profile'),
+      JSON.stringify({ token: { refresh_token: 'target-ref' } })
+    );
+
+    // 2. Simulate an unsaved active token in AUTH_FILE
+    fs.mkdirSync(path.dirname(cfg.AUTH_FILE), { recursive: true });
+    fs.writeFileSync(
+      cfg.AUTH_FILE,
+      JSON.stringify({ token: { refresh_token: 'unsaved-active-ref' } })
+    );
+
+    // 3. Switch to 'target-profile'
+    pm.switchProfile('target-profile');
+
+    // 4. Verify that a backup was automatically created in PROFILES_DIR
+    const files = fs.readdirSync(cfg.PROFILES_DIR);
+    const backupFiles = files.filter(f => f.startsWith('backup-'));
+    assert.equal(backupFiles.length, 1);
+
+    const backupContent = JSON.parse(fs.readFileSync(path.join(cfg.PROFILES_DIR, backupFiles[0]), 'utf8'));
+    assert.equal(backupContent.token.refresh_token, 'unsaved-active-ref');
+  } finally {
+    cleanup();
+  }
+});
+
+test('addProfile throws if profile already exists', () => {
+  const { pm, cfg, cleanup } = setupTestEnvironment();
+  try {
+    fs.mkdirSync(cfg.PROFILES_DIR, { recursive: true });
+    fs.writeFileSync(path.join(cfg.PROFILES_DIR, 'existing'), '{}');
+
+    assert.throws(() => pm.addProfile('existing'), /already exists/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('saveAcpProfile throws if CLI profile does not exist', () => {
+  const { pm, cfg, cleanup } = setupTestEnvironment();
+  try {
+    fs.mkdirSync(path.dirname(cfg.ACP_AUTH_FILE), { recursive: true });
+    fs.writeFileSync(cfg.ACP_AUTH_FILE, JSON.stringify({ refresh_token: 'acp-ref' }));
+
+    assert.throws(() => pm.saveAcpProfile('non-existent-cli'), /does not exist/);
   } finally {
     cleanup();
   }

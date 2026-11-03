@@ -195,9 +195,10 @@ async function main() {
           try {
             await relay.forwardCallback(callbackVal, captured);
             console.log(`[ACP-AUTH] Forwarded callback successfully.`);
-            fs.unlinkSync(CALLBACK_FILE);
           } catch (err: any) {
             console.error(`[ACP-AUTH] Failed to forward callback: ${err.message}`);
+          } finally {
+            try { fs.unlinkSync(CALLBACK_FILE); } catch (_) {}
           }
         }
       }

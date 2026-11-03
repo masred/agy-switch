@@ -19,7 +19,7 @@ _agy_switch() {
   )
 
   local -a profiles
-  local pdir="${HOME}/.gemini/profiles"
+  local pdir="${AGY_PROFILES_DIR:-${GEMINI_DIR:-$HOME/.gemini}/profiles}"
   if [ -d "$pdir" ]; then
     for f in "$pdir"/*(N); do
       local b="$(basename "$f")"

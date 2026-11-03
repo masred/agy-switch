@@ -167,17 +167,34 @@ class ProfileManager {
       activeProfile = savedActive;
     }
 
-    // ACP Token auto-capture & sync for active profile
+    // ACP Token auto-capture & sync for active profile (verified refresh token matching)
     if (activeProfile && fs.existsSync(this.cfg.ACP_AUTH_FILE)) {
       try {
-        const acpProfilePath = path.join(this.cfg.ACP_PROFILES_DIR, activeProfile);
         const curAcpRaw = fs.readFileSync(this.cfg.ACP_AUTH_FILE, 'utf8');
-        let savedAcpRaw = null;
-        if (fs.existsSync(acpProfilePath)) {
-          savedAcpRaw = fs.readFileSync(acpProfilePath, 'utf8');
-        }
-        if (curAcpRaw !== savedAcpRaw) {
-          writeFileAtomic(acpProfilePath, curAcpRaw, { mode: 0o600 });
+        const curAcpData = JSON.parse(curAcpRaw);
+        const curRef = curAcpData?.refresh_token || curAcpData?.token?.refresh_token;
+
+        if (curAcpData && curRef) {
+          const acpProfilePath = path.join(this.cfg.ACP_PROFILES_DIR, activeProfile);
+          let shouldSync = false;
+
+          if (!fs.existsSync(acpProfilePath)) {
+            shouldSync = true;
+          } else {
+            const savedAcpRaw = fs.readFileSync(acpProfilePath, 'utf8');
+            if (curAcpRaw !== savedAcpRaw) {
+              const savedAcpData = JSON.parse(savedAcpRaw);
+              const savedRef = savedAcpData?.refresh_token || savedAcpData?.token?.refresh_token;
+              // Only sync if refresh token matches (healing refreshed access token)
+              if (savedRef && curRef && savedRef === curRef) {
+                shouldSync = true;
+              }
+            }
+          }
+
+          if (shouldSync) {
+            writeFileAtomic(acpProfilePath, curAcpRaw, { mode: 0o600 });
+          }
         }
       } catch (_) {}
     }
@@ -213,6 +230,22 @@ class ProfileManager {
     const targetPath = this.resolveProfilePath(this.cfg.PROFILES_DIR, name);
     if (!fs.existsSync(targetPath)) {
       throw new Error(`Profile '${name}' not found.`);
+    }
+
+    // Auto-backup current unsaved session to avoid accidental data loss
+    const { hasUnsavedActive } = this.loadState();
+    if (hasUnsavedActive && fs.existsSync(this.cfg.AUTH_FILE)) {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const backupName = `backup-${timestamp}`;
+      const backupPath = path.join(this.cfg.PROFILES_DIR, backupName);
+      copyFileAtomic(this.cfg.AUTH_FILE, backupPath, 0o600);
+
+      if (fs.existsSync(this.cfg.ACP_AUTH_FILE)) {
+        const acpBackup = path.join(this.cfg.ACP_PROFILES_DIR, backupName);
+        copyFileAtomic(this.cfg.ACP_AUTH_FILE, acpBackup, 0o600);
+      }
     }
 
     safeUnlinkSync(this.cfg.PENDING_FILE);
@@ -251,6 +284,11 @@ class ProfileManager {
 
   addProfile(name) {
     const validName = this.validateProfileName(name);
+    const targetPath = this.resolveProfilePath(this.cfg.PROFILES_DIR, validName);
+    if (fs.existsSync(targetPath)) {
+      throw new Error(`Profile '${validName}' already exists. Use 'agy-switch save ${validName}' to update it, or choose another name.`);
+    }
+
     const { active, hasUnsavedActive } = this.loadState();
 
     // Auto-backup current unsaved session
@@ -362,6 +400,10 @@ class ProfileManager {
     const targetName = name ? this.validateProfileName(name) : this.getActiveProfile();
     if (!targetName) {
       throw new Error('No profile specified and no active profile detected.');
+    }
+    const profilePath = this.resolveProfilePath(this.cfg.PROFILES_DIR, targetName);
+    if (!fs.existsSync(profilePath)) {
+      throw new Error(`Profile '${targetName}' does not exist. Save the CLI profile first.`);
     }
     if (!fs.existsSync(this.cfg.ACP_AUTH_FILE)) {
       throw new Error(`Active ACP token (${this.cfg.ACP_AUTH_FILE}) does not exist. Run /agy auth in Pi first.`);

@@ -5,6 +5,10 @@
  * Standalone terminal utility with zero external dependencies.
  */
 
+try {
+  process.umask(0o077);
+} catch (_) {}
+
 const { runCLI } = require('../src/cli/commands');
 
 runCLI();

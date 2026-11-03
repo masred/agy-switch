@@ -54,14 +54,32 @@ class TUI {
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
     process.on('exit', () => this.cleanupTerminal());
+    process.on('uncaughtException', (err) => {
+      this.cleanupTerminal();
+      console.error(err);
+      process.exit(1);
+    });
 
     this.refreshData();
     this.render();
   }
 
+  getContentHeight() {
+    const rows = process.stdout.rows || 24;
+    const currentY = this.pending ? 6 : 3;
+    return Math.max(4, rows - currentY - 5);
+  }
+
   cleanupTerminal() {
     if (!this.running) return;
     this.running = false;
+    if (this.statusTimer) clearTimeout(this.statusTimer);
+    if (process.stdin.isTTY && process.stdin.setRawMode) {
+      try { process.stdin.setRawMode(false); } catch (_) {}
+    }
+    try { process.stdin.pause(); } catch (_) {}
+    if (this.onKeypress) process.stdin.removeListener('keypress', this.onKeypress);
+    if (this.onResize) process.stdout.removeListener('resize', this.onResize);
     process.stdout.write('\x1b[?25h\x1b[?1049l');
   }
 
@@ -105,8 +123,7 @@ class TUI {
       return;
     }
 
-    const rows = process.stdout.rows || 24;
-    const contentH = Math.max(5, rows - 11);
+    const contentH = this.getContentHeight();
 
     // Normal Navigation
     switch (key.name) {
@@ -306,13 +323,14 @@ class TUI {
       return;
     }
 
-    // Accept valid profile name characters: letters, numbers, hyphens, underscores
-    if (str && /^[a-zA-Z0-9_-]$/.test(str)) {
-      if (this.modal.input.length < 64) {
-        this.modal.input += str;
+    // Accept valid profile name characters: letters, numbers, hyphens, underscores (supports paste)
+    if (str && /^[a-zA-Z0-9_-]+$/.test(str)) {
+      const remaining = 64 - this.modal.input.length;
+      if (remaining > 0) {
+        this.modal.input += str.slice(0, remaining);
         this.modal.error = '';
       }
-    } else if (str && /^[\x20-\x7E]$/.test(str)) {
+    } else if (str && /^[\x20-\x7E]+$/.test(str)) {
       this.modal.error = 'Only letters, numbers, hyphens, and underscores are allowed.';
     }
   }
@@ -349,7 +367,7 @@ class TUI {
     }
 
     // 3. Main Area: Split or Single View
-    const contentH = Math.max(4, rows - currentY - 5);
+    const contentH = this.getContentHeight();
     this.adjustScroll(contentH);
 
     const isSplit = cols >= 74;
@@ -447,9 +465,10 @@ class TUI {
           const isSelected = itemIdx === this.selectedIndex;
           const cursor = isSelected ? `${c.brightCyan}▶${c.reset}` : ' ';
           const badge = p.active ? `${c.brightGreen}● [ACTIVE]${c.reset}` : `${c.gray}○${c.reset}`;
-          const emailPart = p.email ? ` ${c.dim}(${p.email})${c.reset}` : '';
+          const emailPart = p.email ? ` (${p.email})` : '';
           const maxLen = Math.max(6, listW - 16);
-          line = ` ${cursor} ${padRight(truncate(p.name + emailPart, maxLen), maxLen)} ${badge}`;
+          const truncatedText = truncate(p.name + emailPart, maxLen);
+          line = ` ${cursor} ${padRight(truncatedText, maxLen)} ${badge}`;
         }
         push(`${c.blue}│${c.reset}${padRight(line, listW)}${c.blue}│${c.reset}`);
       }

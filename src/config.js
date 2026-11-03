@@ -2,11 +2,6 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-// Enforce strict process umask so any file/directory created by default is user-only
-try {
-  process.umask(0o077);
-} catch (_) {}
-
 function createConfig(envOverrides = {}) {
   const HOME = envOverrides.HOME || process.env.HOME || os.homedir();
   const GEMINI_DIR = envOverrides.GEMINI_DIR || process.env.GEMINI_DIR || path.join(HOME, '.gemini');
