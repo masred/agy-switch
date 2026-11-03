@@ -80,9 +80,9 @@ function cmdSwitch(name, manager = profileManager) {
     if (hasAcp) {
       console.log(`${c.green}✓ Synced both Antigravity CLI and ACP tokens.${c.reset}`);
     } else {
-      console.log(`${c.yellow}⚠ Notice: ACP token not found for '${name}'. In Pi, run '/agy auth' to link ACP credentials.${c.reset}`);
+      console.log(`${c.yellow}⚠ Notice: ACP token not found for '${name}'. Authenticate ACP to link credentials.${c.reset}`);
     }
-    console.log(`${c.dim}ℹ Restart any running agy instance or run /reload in Pi for the changes to apply.${c.reset}`);
+    console.log(`${c.dim}ℹ Restart any running agy instance or reload your ACP client for the changes to apply.${c.reset}`);
   } catch (err) {
     console.error(`${c.red}Error: ${err.message}${c.reset}`);
     process.exit(1);
@@ -191,7 +191,7 @@ function cmdVersion() {
 }
 
 function cmdHelp() {
-  console.log(`${c.bold}${c.cyan}agy-switch${c.reset} v${packageJson.version} - Google Account Switcher TUI & CLI for Antigravity CLI (agy) & Pi ACP Bridge\n`);
+  console.log(`${c.bold}${c.cyan}agy-switch${c.reset} v${packageJson.version} - Google Account Switcher TUI & CLI for Antigravity CLI (agy) & ACP Bridge\n`);
   console.log(`${c.bold}USAGE:${c.reset}`);
   console.log(`  ${c.cyan}agy-switch${c.reset}                      Launch interactive TUI application`);
   console.log(`  ${c.cyan}agy-switch <name>${c.reset}               Directly switch to <name>`);

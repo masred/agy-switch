@@ -181,8 +181,8 @@ class TUI {
           try {
             const res = this.manager.switchProfile(selected.name);
             this.refreshData();
-            const acpMsg = res.hasAcp ? ' [CLI+ACP]' : ' [CLI only; run /agy auth in Pi for ACP]';
-            this.setStatus(`✓ Switched to '${selected.name}'${acpMsg}. Restart agy or /reload Pi.`, res.hasAcp ? 'success' : 'warn', 6000);
+            const acpMsg = res.hasAcp ? ' [CLI+ACP]' : ' [CLI only; authenticate ACP to link]';
+            this.setStatus(`✓ Switched to '${selected.name}'${acpMsg}. Restart agy or reload ACP client.`, res.hasAcp ? 'success' : 'warn', 6000);
           } catch (err) {
             this.setStatus(`Error: ${err.message}`, 'error');
           }
@@ -429,7 +429,7 @@ class TUI {
               rightCol = ` ${c.bold}CLI Token:${c.reset}   ${selProfile.hasRefreshToken ? c.green + 'Available (Auto-renew)' + c.reset : c.yellow + 'None' + c.reset}`;
               break;
             case 5:
-              rightCol = ` ${c.bold}ACP Token:${c.reset}   ${selProfile.hasAcp ? c.green + 'Available (Synced)' + c.reset : c.yellow + 'Missing (run /agy auth in Pi)' + c.reset}`;
+              rightCol = ` ${c.bold}ACP Token:${c.reset}   ${selProfile.hasAcp ? c.green + 'Available (Synced)' + c.reset : c.yellow + 'Missing (authenticate ACP to link)' + c.reset}`;
               break;
             case 6:
               rightCol = ` ${c.bold}Expiry:${c.reset}      ${formatExpiry(selProfile.expiry)}`;
@@ -441,7 +441,7 @@ class TUI {
               rightCol = ` ${c.bold}ACP File:${c.reset}    ${selProfile.hasAcp ? c.dim + '~/.gemini/profiles/.acp/' + selProfile.name + c.reset : c.yellow + '(Not linked yet)' + c.reset}`;
               break;
             case 9:
-              rightCol = ` ${c.dim}Press ${c.bold}[Enter]${c.reset}${c.dim} to switch. Restart agy or /reload Pi.${c.reset}`;
+              rightCol = ` ${c.dim}Press ${c.bold}[Enter]${c.reset}${c.dim} to switch. Restart agy or reload ACP client.${c.reset}`;
               break;
           }
         } else if (this.profiles.length === 0 && i === 1) {

@@ -406,7 +406,7 @@ class ProfileManager {
       throw new Error(`Profile '${targetName}' does not exist. Save the CLI profile first.`);
     }
     if (!fs.existsSync(this.cfg.ACP_AUTH_FILE)) {
-      throw new Error(`Active ACP token (${this.cfg.ACP_AUTH_FILE}) does not exist. Run /agy auth in Pi first.`);
+      throw new Error(`Active ACP token (${this.cfg.ACP_AUTH_FILE}) does not exist. Authenticate ACP first.`);
     }
 
     const targetPath = this.resolveProfilePath(this.cfg.ACP_PROFILES_DIR, targetName);

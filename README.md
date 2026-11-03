@@ -1,8 +1,8 @@
 # agy-switch
 
-> Google Account Switcher TUI & CLI for Google Antigravity CLI (`agy`) and Pi ACP Bridge.
+> Google Account Switcher TUI & CLI for Google Antigravity CLI (`agy`) and ACP Bridge.
 
-`agy-switch` is a zero-dependency, standalone terminal application and command-line utility for managing and seamlessly switching between multiple Google accounts on [Google Antigravity CLI](https://antigravity.google) and the Agent Client Protocol (ACP) bridge in Pi.
+`agy-switch` is a zero-dependency, standalone terminal application and command-line utility for managing and seamlessly switching between multiple Google accounts on [Google Antigravity CLI](https://antigravity.google) and the Agent Client Protocol (ACP) bridge.
 
 ---
 

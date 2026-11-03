@@ -1,7 +1,7 @@
 {
   "name": "agy-switch",
   "version": "1.0.0",
-  "description": "Interactive TUI & CLI Google Account Switcher for Google Antigravity CLI (agy) & Pi ACP Bridge",
+  "description": "Interactive TUI & CLI Google Account Switcher for Google Antigravity CLI (agy) & ACP Bridge",
   "main": "src/index.js",
   "bin": {
     "agy-switch": "bin/agy-switch"

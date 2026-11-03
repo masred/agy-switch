@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * agy-switch: Google Account Switcher TUI & CLI for Antigravity CLI (agy) & Pi ACP Bridge.
+ * agy-switch: Google Account Switcher TUI & CLI for Antigravity CLI (agy) & ACP Bridge.
  * Standalone terminal utility with zero external dependencies.
  */
 

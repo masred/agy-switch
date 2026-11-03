@@ -81,7 +81,7 @@ async function loadAcpProviderModules() {
 
   if (!fs.existsSync(headlessPath) || !fs.existsSync(connectionPath)) {
     throw new Error(
-      `Could not locate pi-antigravity-acp-provider at ${providerBasePath}. Please ensure the Pi Antigravity provider is installed.`
+      `Could not locate pi-antigravity-acp-provider at ${providerBasePath}. Please ensure the ACP Antigravity provider is installed.`
     );
   }
 
